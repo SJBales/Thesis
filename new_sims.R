@@ -117,20 +117,20 @@ norm.simulator <- function(trials, n, p, lxvar, uxvar, lcor = 0, ucor = 0,
 non.norm.simulator <- function(trials, n, p, lxvar, uxvar, lcor = 0, ucor = 0, 
                                mean_zero = TRUE, lmu = NULL, umu = NULL, 
                                standardize_n = FALSE, standardize_nn = FALSE,
-                               lbeta = -2, ubeta = 2, sd_in = 15) {
+                               lbeta = -2, ubeta = 2, sd_in = 15, bgl, bgu, logis, df) {
   
   # Making output dataframes
-  aic_output_df <- data.frame(matrix(nrow = trials, ncol = (7 + p)))
-  bic_output_df <- data.frame(matrix(nrow = trials, ncol = (7 + p)))
-  lrt_output_df <- data.frame(matrix(nrow = trials, ncol = (7 + p)))
-  ols_output_df <- data.frame(matrix(nrow = trials, ncol = (7 + p)))
+  aic_output_df <- data.frame(matrix(nrow = trials, ncol = (4 + p)))
+  bic_output_df <- data.frame(matrix(nrow = trials, ncol = (4 + p)))
+  lrt_output_df <- data.frame(matrix(nrow = trials, ncol = (4 + p)))
+  ols_output_df <- data.frame(matrix(nrow = trials, ncol = (4 + p)))
   
   for(i in 1:trials){
     # Generating Data
     X <- cbind(X.simulator(n, p, lxvar, uxvar, lcor = 0, ucor = 0, 
                            mean_zero = TRUE, lmu = NULL, umu = NULL, 
                            standardize_n = FALSE),
-               X.nonnorm.simulator(n, standardize_nn = FALSE))
+               X.nonnorm.simulator(n, bgl, bgu, logis, df, standardize_nn = FALSE))
     beta_vec <- runif(ncol(X), lbeta, ubeta)
     Y <- Y.simulator(X, n, sd_in, beta_vec)
     
@@ -177,7 +177,7 @@ non.norm.control.lister <- function(trials, n, p, lxvar, uxvar, lcor, ucor,
 
 # Normal Simulations----
 ## Control Vectors
-nsim <- 5
+nsim <- 5000
 sample_sizes <- c(25, 75, 250)
 parameters <- c(0.1, 0.3)
 lower_vars <- c(1/10, 4)
@@ -215,7 +215,7 @@ for(i in 1:simulations){
   norm_output_list[[i]] <- do.call(norm.simulator, norm_control_list[[i]])
 }
 
-save(norm_output_list, "~/simulations/normal_output.rda")
+save(norm_output_list, file = "~/simulations/normal_simulations.rda")
 
 # Non-Normal Simulations ----
 ## Control vectors
@@ -242,6 +242,7 @@ for(g in 1:length(bg_alpha)){
                                   ucor = upper_cors[c], sd_in = errors[e],
                                   bgl = bg_alpha[g], bgu = bg_beta[g], 
                                   logis = logistic_vars[l], df = t_df[df])
+            index2 <- index2 + 1
           }
         }
       }
@@ -256,5 +257,4 @@ for(i in 1:simulations2){
   non_norm_output_list[[i]] <- do.call(non.norm.simulator, non_norm_control_list[[i]])
 }
 
-save(non_norm_output_list, "~/simulations/non_normal_output.rda")  
-
+save(non_norm_output_list, file = "~/simulations/non_normal_simulations.rda")

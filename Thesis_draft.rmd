@@ -1,0 +1,876 @@
+---
+title: "Thesis_draft"
+author: "Sam Bales"
+header-includes: \usepackage{setspace}\doublespacing
+documentclass: article
+geometry: margin = 1in
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+fontsize: 12pt
+---
+
+\setlength{\parindent}{1cm}
+
+```{r Setup, include = F, echo = F}
+library(tidyverse)
+library(Renvlp)
+library(ks)
+library(xts)
+library(ggridges)
+library(broom)
+library(knitr)
+
+load("all_data.rda")
+
+# Helpful Functions
+converter <- function(x) {as.numeric(as.character(x))}
+
+# Fama-Macbeth Functions----
+## Step One
+stage1.ols.fm.estimator <- function(return_df, factor_df){
+  
+  beta_df <- matrix(nrow = ncol(return_df), ncol = ncol(factor_df))
+  ols_se_df <- matrix(nrow = ncol(return_df), ncol = ncol(factor_df))
+  
+  for (s in 1:ncol(return_df)) {
+    Y <- return_df[, s]
+    model <- lm(Y ~ factor_df) %>% tidy()
+    beta_df[s,] <- model$estimate[2:nrow(model)]
+    ols_se_df[s,] <- model$std.error[2:nrow(model)]
+  }
+  return(list("Beta" = beta_df,
+              "SE" = ols_se_df))
+}
+
+## Step Two
+stage2.ols.fm.estimator <- function(beta_df, return_df){
+  
+  loadings <- matrix(nrow = nrow(return_df), ncol = ncol(beta_df))
+  loadings_se <- matrix(nrow = nrow(return_df), ncol = ncol(beta_df))
+  
+  for (r in 1:nrow(return_df)) {
+    Y2 <- t(return_df[r,])
+    model2 <- lm(Y2 ~ beta_df) %>% tidy()
+    loadings[r,] <- model2$estimate[2:nrow(model2)]
+    loadings_se[r,] <- model2$std.error[2:nrow(model2)]
+  }
+  return(list("Loadings" = loadings,
+              "Loading_SE" = loadings_se))
+}
+
+## Step one: time series regressions of asset returns and factors
+stage1.fm.estimator <- function(return_df, factor_df, criteria = 1){
+  
+  beta_env_df <- matrix(nrow = ncol(return_df), ncol = ncol(factor_df))
+  ratio_env_df <- matrix(nrow = ncol(return_df), ncol = ncol(factor_df))
+  dimension_df <- matrix(nrow = ncol(return_df), ncol = 3) 
+  
+  X <- data.frame(factor_df, row.names = NULL)
+
+  for (s in 1:ncol(return_df)) {
+    Y <- data.frame(return_df[, s])
+    
+    dims <- u.xenv(X, Y)
+    
+    if (dims[[criteria]] != 0){
+     dim <- dims[[criteria]]
+    } else {
+     dim <- 1
+    }
+  
+    env_model <- xenv(X, Y, u = dim)
+    beta_env_df[s,] <- c(env_model$beta)
+    ratio_env_df[s,] <- c(env_model$ratio)
+    dimension_df[s,] <- c(unlist(dims)[1:3])
+  }
+  return(list("Beta" = beta_env_df,
+              "Ratio" = ratio_env_df,
+              "Dimensions" = dimension_df))
+}
+
+na.counter <- function(x){sum(is.na(x))}
+
+
+## Step two: cross-section asset returns as a function of betas estimated in step one
+stage2.fm.estimator <- function(beta_df, return_df, criteria = 1){
+  
+  loadings <- matrix(nrow = nrow(return_df), ncol = ncol(beta_df))
+  loadings_ratios <- matrix(nrow = nrow(return_df), ncol = ncol(beta_df))
+  dimension_df2 <- matrix(nrow = nrow(return_df), ncol = 3)
+  
+  for (r in 1:nrow(return_df)) {
+    Y2 <- data.frame(t(return_df[r,]), row.names = NULL)
+    
+    dims2 <- u.xenv(beta_df, Y2)
+    
+    if (dims2[[criteria]] != 0){
+      dim2 <- dims2[[criteria]]
+    } else {
+      dim2 <- 1
+    }
+    
+    env_model2 <- xenv(beta_df, Y2, u = dim2)
+    loadings[r,] <- c(env_model2$beta)
+    loadings_ratios[r,] <- c(env_model2$ratio)
+    dimension_df2[r,] <- c(unlist(dims2)[1:3])
+  }
+  return(list("Loadings" = loadings,
+              "Loading_Ratios" = loadings_ratios,
+              "Dimensions" = dimension_df2))
+}
+
+```
+
+# Introduction
+
+Odinary Least Squares (OLS) regression is a commonly used multivariate statistical technique. The general form of the model is
+
+\begin{center}
+$Y = \mu + \textbf{X}\beta+ \varepsilon$ \hspace{1cm}(1)\ 
+\end{center}
+
+
+  Where $Y\: \in\: R^{n}$,  $\textbf{X}\: \in\:  R^{n\: x\: p}$, $\beta \in R^{\: p}$ and $\varepsilon\:  \in\: R^{n}$ is a normal random vector with zero mean and variance matrix $\Sigma = \sigma^{2} I \in R^{n\: x\: n}$. OLS highly flexible, easy to interpret, and linear relationships often sufficiently approximate relationships between independent and dependent variables.
+
+  Several attempts have been made to improve the predictive accuracy and inferential capacity of OLS, ranging from simple mathematical transformations of predictors to altering the objective function. These improvements have been undertaken for good reason: improving the performance of a widely used technique can reap substantial benefits. However, before new methodologies can be presented, the meaning of an "improvement" must be defined. To arrive at an appropriate definition, consultation of statistical theory is necessary.
+
+  Unbiasedness, Efficiency, and Sufficiency are three properties of estimators that underly modern statistical theory. Unbiasedness asserts that the average value of an estimator--or statistic--will equal the true population parameter as the sample size approaches infinity. Efficiency relates to the variability of an estimator, and all else being equal, one prefers to have an estimator that has less variability (standard error). The estimator with the lowest relative standard error is said to be an efficient estimator. Sufficiency suggests a statistic should preserve all relevant information about the paramter contained in observations. Thus, and "improvement" in estimators should improve one of these three properties. 
+
+  According to the Gauss-Markov theorem, an OLS estimator is the Best Linear Unbiased Estimator (BLUE) if a set of assumptions are satisfied, and is a sufficient statistic by construction. Thus, improvements in ordinary least square estimators are focused on increasing the efficiency of the estimator. Increasing the efficiency of statistical technique has positive practical implications. Estimators with smaller standard errors of lead to decreased error rates of statistical tests, translating into more robust discoveries by decreasing false conclusions (type I error) and improving the chances of detecting true relationships (power), ceteris paribus. Lower error rates translate into better business decisions, safer product development, and more robust scientific conclusions. Greater power translates into shorter decision lags, less costly experiments, and the potential for greater discovery.
+
+  Some techniques have been developed that have greater efficiency in particular situations such as Ridge regression, Principal Component Regression, and LASSO regression. However, these techniques can add unnecessary complexity outside of their intended use which often complicates interpretability and affects inferential capabilities. Keeping these limitations in mind, a new technique called envelope methods has the potential to improve many of the commonly used multivariate statistical techniques including OLS regression. Envelope methods are not a panacea, and this nascent methodology has many areas of active research. A review of the existing literature will show relevant applications and revelant research questions.
+
+# Literature Review
+
+  The literature review is divided into two sections. Background information and a techincal introduction to envelopes are presented first, followed by a summary of additional research. Relevant notation needed for the presentation of envelope methods are included at the beginning of this section.
+
+## Notation
+
+The following notations are used throughout the paper:
+
+\begin{itemize}
+	\item Let $\mathbb{R}^{a\: x\: b}$ denote the space of all real $a\: x\: b$ matrices
+	\item Let span($\textbf{A}$) denote the span of the columns of $\textbf{A} \in \mathbb{R}^{a x b}$
+	\item Let $\textbf{X}\: \in \mathbb{R}^{n\: x\: p}$ denote a matrix of $p$ predictors with $n$ observations
+	\item Let $S\: \in \mathbb{R}^{p\: x\: p}$ denote a symmetric, postive-definite matrix
+	\item Let $\textbf{M} \in \mathbb{R}^{p \: x \: u}$ denote a semiorthogonal basis matrix such that $\textbf{M}^{T}\textbf{M} = \textbf{I}$
+	\item For a subspace $\mathcal{R} \in \mathbb{R}^{p}$, let $\textbf{S}\mathcal{R}$ denote the space of all vectors $\textbf{S}x$ as $x$ runs through $\mathcal{R}$
+	\item The projection onto the subspace $\mathcal{R}$ in the inner product of $\textbf{A}$ is given as $P_{(\mathcal{R}(S))}=\textbf{M}(\textbf{M}^T \textbf{S}\textbf{M})^{-1} \textbf{M}^T \textbf{S}$ when $\textbf{M}$ is a basis matrix for $\mathcal{R}$
+	\item Let $\mathcal{R}^\perp$ denote the orthogonal complement of $\mathcal{R}$ and let $\textbf{Q}_{(\mathcal{R}(\textbf{S}))}=\textbf{I}_{p}- \textbf{P}_{(\mathcal{R}(\textbf{S}))}$ such that $\textbf{P}_{(\mathcal{R}^\perp)}= \textbf{Q}_R$
+\end{itemize}
+
+## Literature on Envelopes
+
+  The development of envelopes is founded on the notion of sufficient dimension reduction. Sufficient dimension reduction can be viewed as a natural extension of the concept of sufficiency to functions of the data. To illustrate, suppose $\textbf{X}$ in (1) is replaced by a function R($\textbf{X}$) that contains all the relevant information in $\textbf{X}$ that is related to $Y$. Substantial gains can arise when R($\textbf{X}$) is lower dimension than $\textbf{X}$, and in situations where this occurs, it is called sufficient dimension reduction (Adragni and Cook, 2007). 
+
+  The concept of sufficient dimension reduction was used by Cook, Li and Chiaromonte (2007), who presented a method for regression without inverting the predictor covariance matrix. This methodology requires estimating a central subspace of a $p\: x\: u$ matrix $\eta$ such that $Y \perp X\vert\eta^{T}X$. The intersection of all such reducing subspaces is referred to as the central subspace (Cook et al., 2007). Most importantly, $\eta^{T}X$ contains all of the relevant in formation about $Y$ contained in $X$, and thus the regression of $Y$ on the lower dimensional space $\eta^{T}X$ is informationally equivalent to the regression of $Y$ on $X$--which is a *sufficient* dimension reduction. The advantages of this technique are multifold. It can facilitate regressions in which $n$ does not dominate $p$, allow visualization of regressions in lower dimensions, and collinearity and base inference on a smaller subset of predictors (Cook et al., 2007).
+
+  These ideas were generalized by Cook, Li and Chiaromonte (2010), who proposed envelope methods for multivariate regression. Traditional multivariate regression requires many parameters to be estimated, which decreases efficiency. Multivariate envelopes aim to reduce the dimension of the response vector to reduce the number of parameters that must be estimated. Similar to (Cook at al., 2007), this method requires the estimation of the central subspace of the response vector, called the 'Envelope'. Envelopes can be constructed by assuming a subspace $\mathcal{R}$ of $\mathbb{R}^{p}$ such that:
+
+\begin{enumerate}
+	\item $Q_{\mathcal{S}}\textbf{X}$ is uncorrelated with $P_{\mathcal{S}}\textbf{X}$ and 
+	\item $Y$ is uncorrelated with $Q_{\mathcal{S}}\textbf{X}$ given $P_{\mathcal{S}}\textbf{X}$.
+\end{enumerate}
+
+  For any $S$ with properties (1) and (2), $Q_{\mathcal{S}}\textbf{X}$ is said to be linearly immaterial to the regression. Furthermore, $P_{\mathcal{S}}\textbf{X}$ is said to contain all of the information available about $\beta$ in $\textbf{X}$. The subspace of minimum dimension that satisfies the two conditions about is said to be the "envelope". Practically, this method partitions the response covariance matrix into a two matrices: one that contains variation material to the regression and one that contains immaterial variation.
+
+  Cook, Helland, and Su (2013) introduced the notion of a predictor envelope and demonstrated the link to partial least squares. Predictor envelopes are a natural extension of response envelopes, as the predictor covariance matrix is partitioned into two matrices instead of the response covariance matrix. The following propositions connect the above theoretical conditions with the algebraic properties that allow for the construction of envelopes.
+
+*Proposition* (Cook et al. 2013) Assuming model (1), the condition (i) that corr($P_{\mathcal{\mathcal{S}}} \textbf{X}$, $Q_{\mathcal{\mathcal{S}}} \textbf{X}$) = 0 is algebraically equivalent to
+
+\begin{itemize}
+	\item $\Sigma_{\textbf{X}}\mathcal{S} \subseteq \mathcal{S}$ and $\Sigma_{\textbf{X}}\mathcal{S}^{\perp} \subseteq \mathcal{S}^{\perp}$
+\end{itemize}
+
+When (a) holds, $S$ is said to be a reducing subspace of $\Sigma_{\textbf{X}}$. See appendix (insert appendix number) for background information on invariant reducing subspaces. Condition (ii) that $corr(y,\textbf{Q}_{\mathcal{S}} \textbf{X}\vert \textbf{P}_{\mathcal{S}} \textbf{X}) = 0$ is algebraically equivalent to 
+
+\begin{itemize}
+	\item $span(\beta)\subseteq \mathcal{S}$.
+\end{itemize}
+
+The intersection of reducing subspaces is itself a reducing subpace. The smallest $\mathcal{S}$ satisfying (a) and (b) is called the $\Sigma_{X}\:$ envelope of $span(\beta)$ and is denoted as ${\mathcal{E}}_{(\Sigma_{X})}\{span(\beta)\}$. See Appendix (insert appendix number) for background information on reducing subspaces. 
+
+To rewrite (1) as an envelope model, let $d = dim{\mathcal{E}_(\Sigma_{\textbf{X}}) span(\beta)}$, let $\Sigma_{\textbf{X}Y} = cov(\textbf{X}, Y)$ and let $\Gamma \in R^{p\: x\: d}$ be a semi-orthogonal basis matrix for $\mathcal{E}_{\textbf{X}}(\beta)$. With a known $\Gamma$, (1) can be rewritten as:
+
+\begin{center}
+$Y= \mu + \alpha^{T}\Gamma^{T} \textbf{X} + \varepsilon$ where $\Sigma_{\textbf{X}} = \Gamma^{T}\Omega\Gamma + \Gamma_{0}^{T}\Omega_{0}\Gamma_{0}$ (2).
+\end{center}
+
+Thus, a reduction in the predictor space leads to a partitioning of the predictor covariance matrix into sub-matrices that contain material and immaterial variation. By only considering the variation in the response covariance matrix that is material to the span of the coefficient matrix, the authors were able to obtain substantial gains in efficiency when compared to ordinary least squares. The parameter $\alpha = (\Gamma^{T}\Gamma)^{-1}\Gamma^{T}\Sigma_{\textbf{X}} \in R^{d\: x\: 1}$ contains the coordinates of $\beta$ relative to $\Gamma$ (Cook et al., 2013). Thus, the coefficient vector in (2) is given by
+
+\begin{center}
+$\hat\beta_{\mathcal{E}} \equiv \Gamma\alpha = \Gamma(\Gamma^{T}\Gamma)^{-1}\Gamma^{T}\Sigma_{\textbf{X}Y} = P_{(\mathcal{E}(\Sigma_{\textbf{X}Y}))} = \beta$. 
+\end{center}
+
+The coefficient vector in (2) does not depend on the chosen $\Gamma$, and $\mathcal{E}_{\Sigma_{\textbf{X}}}(\beta)$ is a parameter that must be estimated. $\mathcal{E}_{\Sigma_{\textbf{X}}}(\beta)$ lives in a set of $d$ dimensional subspaces of $R^{p}$, which is a Grassmann manifold denoted as $\mathcal{G}(d, p)$. The likelihood function for $\Gamma$--the orthogonal basis matrix for $\mathcal{E}_{\Sigma_{\textbf{X}}}(\beta)$--is given by:
+
+\begin{center}
+$J(\Gamma) = log|\Gamma^{T}\textbf{S}_{\textbf{X}}\Gamma| + log|\Gamma^{T}(\textbf{S}_{\textbf{X}} - \textbf{S}_{\textbf{X}Y}\textbf{S}_{\textbf{X}Y}^{T} / s^{2}_{Y})^{-1}\Gamma|$.
+\end{center}
+
+Estimation of $\Gamma$ was originally done by Grassmannian optimization, but better estimation procedures such as the SIMPLS and a new algorithm suggested by Cook, Forzani and Su (2017) reduce the computing load and increase accuracy. 
+
+However, envelopes can only offer efficiency gains when the rank of $\beta$ is less than $r$. Su and Cook (2012) introduced inner envelopes, which assume the entire vector $Y$ is material to the estimation of $\beta$ and can offer gains when the rank of $\beta$ is equal to $r$. Su and Cook (2011) introduced partial envelopes, which allow a subset of the predictors to be enveloped. Partial envelopes are useful when additional variables are included in the model that are not of particular interest such as control variables. Envelope methods have further been extended to many statistical techniques. Cook and Zhang (2013) introduced simultaneous envelopes for multivariate regression, which simultaneaously reduces $X$ and $Y$. Envelope methods were applied to generalized linear models, including logistic, Poisson, and Cox regression through the developement of a generalized enveloping model (Cook and Zhang, 2014). Khare, Pal and Su, (2017) applied Bayesian methods to envelope models by specifying a Bingham distribution on the set of orthgonal basis matrices $\Gamma$. The authors noted the posterior distribution can be approximated with a Gibb's sampler. Envelope methods have also been extened to matrix variate regression (Cook and Ding, 2018).
+
+Implementation of envelope methods presents additional complexity. Most importantly, the size--$d$--of the envelope must be estimated a priori. The sucess of the technique hinges on choosing an approprate $d$. Selecting too small of an envelope will produce biased estimates, while estimating too large of an envelope will prevent the modeler from taking full advantage of the gains in efficiency (Cook, 2014). Cook (2014) proposed using holdout samples, cross-validation, or information criteria to estimate the dimension of predictor envelopes, but the performance of these techniques have not been examined in detail. The R package Renvlp by Minji Lee and Zhihua Su implements three methods for selecting the dimension of the envelope: Likelihood Ratio Testing (LRT), Akaike Information Criteria (AIC), and Bayesian Information Criteria (BIC). 
+
+## Research Question
+
+Envelopes for multivariate regression have been widely studied, but most modeling tasks involve only a univariate response. A modeling task with a univariate response and a multidimensional predictor space is the most common regression setup, and a predictor envelope can be used. Selecting the correct dimension for this predictor envelope is critical for its performance. Additionally, there may be circumstances where envelope methods do not outperform traditional modeling techniques. Thus, the objective of this paper is to examine the performance of LRT, AIC, and BIC for selecting the predictor envelope dimension under a variety of circumstances, and determine which dimension selection criteria should be used given the structure of the data.
+
+# 3. Methodology
+
+The research methods can be divided into two main parts: a simulation study intend to test envelopes under a variety of controled conditions, and an application to Fama-Macbeth Regression. The simulation study was divided into two parts: the first phase simulated predictors from a multivariate normal distribution to principally test the effects of multicollinearity, sample size, and number of predictors; the second phase examined the impact of non-normally distributed predictors. 
+
+A fully factorial design was employed, and 2000 datasets for each combination of factors listed in tables 3.1 and 3.2 were simulated and fit by the following three envelope models and one OLS model:
+
+\begin{center}
+
+$Y= \mu + \textbf{X}\Gamma_{AIC}\alpha + \varepsilon$ \\ 
+$Y= \mu + \textbf{X}\Gamma_{BIC}\alpha + \varepsilon$ \\
+$Y= \mu + \textbf{X}\Gamma_{LRT}\alpha + \varepsilon$ \\
+$Y= \mu + \textbf{X}\beta + \varepsilon$ \\ 
+
+\end{center}
+
+The subscript on the $\Gamma$ matrix indicates which dimension selection criterion was used, which computed using the following equations:
+
+\begin{center}
+
+$AIC = 2p - 2J(\Gamma, p)$ \\
+$BIC = 2ln(p) - 2J(\Gamma, p)$ \\
+$LRT = 2(J(\Gamma,p) - J(\Gamma, (p-1))$ \\
+
+\end{center}
+
+Estimating the dimension and coefficients of 3 envelope models was computationally expensive. Coupled with the computational load of simulating datasets, breaking the study into two phases was necessary to reduce computation time.
+
+## Phase 1
+
+The first phase of the simulation study was intended to test envelope methods while manipulating the following factors: sample size, number of predictors, correlation among predictors, variation of predictors, and distribution of $\varepsilon$. The levels of each factor used are listed Table 3.1.
+
+```{r Table 3.1, echo = F}
+table_3.1 <- data.frame(rbind(c("25", "10%", "0 to 0.3",  "1/10 to 4", "N(0, 100)"),
+      c("75", "30%", "0.3 to 0.7",  "4 to 15", "N(0, 400)"),
+      c("25", "", "0.7 to 1",  "", "")))
+
+names(table_3.1) <- c("Sample Size", 
+                          "Number of Predictors (% of Sample Size)", 
+                          "Predictor Correlation (Absolute Value)", 
+                          "Predictor Variance", 
+                          "Residual Distribution")
+
+table_3.1 %>% knitr::kable()
+```
+
+Only the parameters specified in Table 3.1 was were assumed to be fixed for a simulation run. For each dataset, $\sigma^{2}_X$ was simulated from a uniform distribution using the upper and lower limits specified in table 3.1. Other inputs into the model were simulated from the uniform distribution to average out their effects; $\mu_X$ was simulated with upper and lower limits of 5 and 15, respectively, and $\beta$ was simulated with upper and lower limits of -2 and 2, respectively. $Y$ was constructed as the inner product of $\beta$  and $X$ plus the random vector specified in the table 3.1. 
+
+## Phase 2
+
+The second phase examined the performance of each dimension selection technique when some predictor variables follow non-normal distrbutions. Similar to phase 1, a fully factorial design was implemented, and the factor levels are presented in Table 3.2. Datasets with 100 observations were simulated with predictors from the Gamma, Beta, logistic, and T distributions along with five predictors from the multivariate normal distribution. Correlation among the non-normal variables is computationally intensive, so the variance of the predicotrs was the main characteristic investigated.
+
+```{r}
+table_3.2 <- data.frame(rbind(c("0 to 0.3", "N(0, 100)", "Gamma", "scale = 1 & shape = 2", "shape = 5, scale = 10"),
+      c("0.3 to 0.7", "N(0, 400)", "Beta", "scale = 1 & shape = 2", "shape = 5, scale = 10"),
+      c("0.7 to 1", "", "Logistic", "1", "10"),
+      c("", "", "T", "df = 20", "df = 1")))
+
+names(table_3.2) <- c("Predictor Correlation (Absolute Value)", 
+                      "Residual Distribution",
+                      "Non-Normal Distribution",
+                      "Low Variance", 
+                      "High Variance")
+
+table_3.2 %>% knitr::kable()
+```
+
+Similar to phase 1, inputs for the simulation that are not specified in Table 3.2 were simulated from a uniform distribution with the same upper and lower limits.  
+
+# Results
+
+The findings from each simulation phase are presented below. In each phase, the scenarios where envelopes offer advantages over OLS are presented first, followed by a detailed description of the operating characteristics of each dimension selection technique. Each technique was evaluated with three metrics: mean-squared error (MSE), bias and standard error (SE). Moreover, the Monte Carlo Standard Error (MCSE) was computed for each metric. Table 4.1 contains the expressions used to compute each metric and its associated MCSE.
+
+
+\begin{table}[ht]
+\caption{Table 4.1: Evaluation Criteria}
+\centering
+\begin{tabular}{c c c}
+\hline\hline
+Metric & Estimator & Monte Carlo SE\\ [0.5ex]
+%heading
+\hline
+Bias & $\frac{1}{n_{sim}} \sum_{i = 1}^{n_{sim}} (\hat{\theta_{i}} - \bar{\theta})$ & $\sqrt{\frac{1}{n_{sim}(n_{sim} - 1)}\sum_{i = 1}^{n_{sim}}(\hat{\theta_{i}} - \bar{\theta})^{2}}$ \\
+SE & $\sqrt{\frac{1}{n_{sim} - 1}\sum_{i = 1}^{n_{sim}}(\hat{\theta_{i}} - \bar{\theta})^{2}}$ & $\frac{\widehat{SE}}{\sqrt{2(n_{sim} - 1)}}$ \\
+MSE & $\frac{1}{n_{sim}}\sum_{i = 1}^{n_{sim}}  (\hat{\theta_{i}} - \bar{\theta})^{2}$ & $\sqrt{\sum_{n_{sim}}^{i = 1}\frac{\vert (\hat{\theta_{i}} - \bar{\theta})^{2} - \widehat{MSE}\vert^2}{n_{sim}(n_{sim} - 1)}}$ \\
+\hline
+\end{tabular}
+\end{table}
+
+
+## Phase 1
+
+First, the results from phase 1 suggest OLS outperforms envelopes when the data are relatively well behaved. For example, Figure 1 shows the MSE of OLS is smaller than the MSE of envelopes when the sample size is large with few collinear predictors and little variation in the response. This figure shows OLS mostly has the lowest MSE regardless of the number of predictors and the correlation among them when the sample size is large, predictor variation is high, and there is little variation in the response. 
+
+Envelopes are on par with OLS where there are many highly correlated predictors, but in general under these conditions envelopes do not outperform OLS. In some scenarios envelopes actually perform worse, and the degree of underperformance is a function of the dimension selection criteria used and how small of an envelope it tends to estimate.
+
+```{r Figure 4.1, echo = F}
+analyzing_df %>%
+  filter(Predictor_Variance == 'high', Noise == 'low') %>%
+  mutate(Correlation = fct_relevel(Correlation, c('low', 'medium', 'high')),
+         Parameters = fct_recode(Parameters, '10%' = '0.1', '30%' = '0.3')) %>%
+  group_by(Method, Parameters, Correlation) %>%
+  summarize(Bias = mean(Bias), SE = mean(Variance), MSE = mean(MSE)) %>%
+  ggplot(aes(x = Method, y = MSE, fill = Method)) + 
+  facet_wrap(Parameters ~ Correlation) +
+  geom_bar(stat = 'identity') +
+  ylab("MSE") +
+  labs(title = "Figure 1: All Sample Sizes, High Predictor Variance, Low Response Variation") +
+  theme_classic()
+```
+
+Figure 4.2 shows the MSE for each techinque with sample sizes of either 75 or 250 with high response variation, faceted over the number of and correlation of predictors. Similar to Figure 4.1, envelopes underperform OLS when there are relatively few predictors, regardless of their correlation. However, envelopes begin to eek out a small advantage when there are many predictors. The difference between OLS and envelopes is small, so the increased performance is likely not worth the additional complexity of using envelopes, but this figure shows collinearity has the lowest impact on the relative performance of the dimension selecton criteria.
+
+```{r Figure 4.2, echo = F}
+analyzing_df %>%
+  filter(Sample_size %in% c(75, 250) , Predictor_Variance == 'high', Noise == 'high') %>%
+  mutate(Correlation = fct_relevel(Correlation, c('low', 'medium', 'high')),
+         Parameters = fct_recode(Parameters, '10%' = '0.1', '30%' = '0.3')) %>%
+  group_by(Method, Parameters, Correlation) %>%
+  summarize(Bias = mean(Bias), SE = mean(Variance), MSE = mean(MSE)) %>%
+  ggplot(aes(x = Method, y = MSE, fill = Method)) + 
+  facet_wrap(Parameters ~ Correlation) +
+  geom_bar(stat = 'identity') +
+  ylab("MSE") +
+  labs(title = "Figure 4: Large Sample Size",
+  subtitle = "High Predictor Variance, High Response Variation") +
+  theme_classic()
+```
+
+Envelopes offer substantial advantages over  
+
+```{r Figure 4.3, echo = F}
+analyzing_df %>%
+  filter(Sample_size == 25, Predictor_Variance == 'high', Noise == 'high') %>%
+  mutate(Correlation = fct_relevel(Correlation, c('low', 'medium', 'high')),
+         Parameters = fct_recode(Parameters, '10%' = '0.1', '30%' = '0.3')) %>%
+  group_by(Method, Parameters, Correlation) %>%
+  summarize(Bias = mean(Bias), SE = mean(Variance), MSE = mean(MSE)) %>%
+  ggplot(aes(x = Method, y = MSE, fill = Method)) + 
+  facet_wrap(Parameters ~ Correlation) +
+  geom_bar(stat = 'identity') +
+  ylab("MSE") +
+  labs(title = "Figure 5: Small Sample Size",
+  subtitle = "High Predictor Variance, High Response Variation") +
+  theme_classic()
+```
+
+Envelope methods begin to outperform OLS in large samples when there are many predictors with little variation. Surprisingly, there is little impact from the collinearity of the predictors.
+
+```{r Figure 4.4, echo = F}
+analyzing_df %>%
+  filter(Sample_size == 250, Predictor_Variance == 'low', Noise == 'low') %>%
+  mutate(Correlation = fct_relevel(Correlation, c('low', 'medium', 'high')),
+         Parameters = fct_recode(Parameters, '10%' = '0.1', '30%' = '0.3')) %>%
+  group_by(Method, Parameters, Correlation) %>%
+  summarize(Bias = mean(Bias), SE = mean(Variance), MSE = mean(MSE)) %>%
+  ggplot(aes(x = Method, y = MSE, fill = Method)) + 
+  facet_wrap(Parameters ~ Correlation) +
+  geom_bar(stat = 'identity') +
+  ylab("MSE") +
+  labs(title = "Figure 6: Large Sample Size",
+  subtitle = "Low Predictor Variance, Low Response Variation") +
+  theme_classic()
+```
+
+Figure 4.5 shows the MSE of each technique when the variation in the predictors is low and there is little variation in the response. The advantages of LRT become more pronounced as the data become less "friendly".
+
+```{r Figure 4.5, echo = F}
+analyzing_df %>%
+  filter(Sample_size %in% c(25, 75), Predictor_Variance == 'low', Noise == 'low') %>%
+  mutate(Correlation = fct_relevel(Correlation, c('low', 'medium', 'high')),
+         Sample_size = factor(Sample_size)) %>%
+  group_by(Method, Sample_size) %>%
+  summarize(Bias = mean(Bias), SE = mean(Variance), MSE = mean(MSE)) %>%
+  ggplot(aes(x = Method, y = MSE, fill = Method)) + 
+  facet_wrap(. ~ Sample_size, scales = "free_y", nrow = 1) +
+  geom_bar(stat = 'identity') +
+  ylab("MSE") +
+  labs(title = "Figure 7: Small and Medium Sample Size",
+  subtitle = "Low Predictor Variance, Low Response Variation") +
+  theme_classic()
+```
+
+When the data are the least "friendly"--high variation in the response and many correlated predictors with low variability--envelope methods offer large advantages over OLS. Moreover, LRT is the best dimension selection criteria in these scenarios. Also note the dramatic reduction in MSE in small sample sizes. MSE for OLS with a sample size of 25 is 15.64, whereas the MSE using LRT to select the predictor envelope resilts in a MSE of 3.23. 
+
+```{r Figure 4.6, echo = F}
+analyzing_df %>%
+  filter(Predictor_Variance == 'low', Noise == 'high') %>%
+  mutate(Correlation = fct_relevel(Correlation, c('low', 'medium', 'high')),
+         Sample_size = factor(Sample_size)) %>%
+  group_by(Method, Sample_size) %>%
+  summarize(Bias = mean(Bias), SE = mean(Variance), MSE = mean(MSE)) %>%
+  ggplot(aes(x = Method, y = MSE, fill = Method)) + 
+  facet_wrap(. ~ Sample_size, scales = "free_y", nrow = 1) +
+  geom_bar(stat = 'identity') +
+  ylab("MSE") +
+  labs(title = "Figure 4.6: Advantages of Envelopes",
+  subtitle = "Low Predictor Variance, High Response Variation") +
+  theme_classic()
+```
+```{r, echo = F}
+analyzing_df %>%
+  filter(Sample_size == 25, Predictor_Variance == 'low', Noise == 'high') %>%
+  mutate(Correlation = fct_relevel(Correlation, c('low', 'medium', 'high')),
+         Sample_size = factor(Sample_size)) %>%
+  group_by(Method, Sample_size) %>%
+  summarize(Bias = mean(Bias), SE = mean(Variance), MSE = mean(MSE)) %>%
+  knitr::kable()
+```
+
+```{r, echo = F}
+analyzing_df %>%
+  filter(Sample_size == 75, Parameters == 0.1, Predictor_Variance == 'low', 
+         Correlation == 'high', Noise == 'low') %>%
+  group_by(Method) %>%
+  summarize(Bias = mean(Bias), SE = mean(Variance), MSE = mean(MSE))  %>%
+  ggplot(aes(x = Method, y = MSE, fill = Method)) +
+  geom_bar(stat = 'identity') +
+  labs(title = "Figure 9: Advantages of BIC", 
+       subtitle = "75 Observations, 8 Highly Collinear Predictors with Low Variability, Low Variability in the Response") +
+  theme_classic()
+  
+```
+
+The best dimension selection criteria for normally distributed predictors is a function of the structure of the data, with the most important factor being the variation in the predictors. Low variability in the predictors makes envelopes more efficient than OLS. As seen from the above figures, LRT testing is often the best dimension selection criteria in these scenarios, and if often the best choice when the data are the most "poorly" behaved. However, LRT doesn't always have superior performance. Figure 9 shows that BIC has a lower MSE than AIC and LRT whent the data conditions aren't as severe. Thus, determining which dimension selection criteria is best for a given modeling scenario should be an iterative process. 
+
+## Phase 2
+
+Normally distributed data were included to test the effects of collinearity, sample size, and number of predictors, since those variables are easily manipulated using multivariate normal random number generators. However, perfectly normally distributed predictors are uncommon in practice, and the performance of dimension selection techniques may change depending on the shape of the distribution. 
+
+The objective in the second phase of the simulation study was to determine the best dimension selection technique when the predictors are not normally distributed. Figure 1 shows the overall MSE of each dimension selection technique during this phase. LRT is clearly superior overall with a substantially lower MSE than the other techniques. 
+
+```{r, echo = F}
+# MSE Plots
+## Overall MSE of each selection criteria
+nn_analyzing_df %>% 
+  group_by(Method) %>%
+  summarize(MSE = sum(MSE), Bias = sum(Bias), Variance = sum(Variance)) %>%
+  ggplot(aes(x = Method, y = MSE, fill = Method)) + 
+  geom_bar(stat = "identity") +
+  labs(title = "Figure 4.2.1: Phase 2 Overall MSE")
+```
+
+Table 1 contains the MSE for each method and variable. The performance of each method is comparable for variables 1 through 5, 8 and 9, but the MSE for variables 6 and 7 is substantially different. For variable 7, the MSE for LRT is 11.13, whereas the MSE for BIC, AIC, and OLS is 45.02, 104.10, and 174.01 respectively. Variable 7 follows a Beta distribution, so all values lie in the interval (0,1). The methods have similar performance for predictor 6 which follows a Gamma distribution. Values from the Gamma distribution are not restricted to the interval (0,1), and these results persist even whent the variance of the distribution is adjusted as seen in Table 2. These results suggest envelope methods outperform OLS when the variance of the predictors is restricted. Moreover, LRT performs best when the predictors have lower variance.
+
+```{r, echo = F}
+## MSE of Selection Criteria Across Variables
+table_4.2.1 <- nn_analyzing_df %>%
+  pivot_wider(names_from = Method, values_from = MSE) %>%
+  group_by(Variable) %>%
+  summarize(AIC = mean(AIC, na.rm = T),
+            BIC = mean(BIC, na.rm = T),
+            LRT = mean(LRT, na.rm = T),
+            OLS = mean(OLS, na.rm = T)) 
+
+## MSE for Variables 6 & 7
+table_4.2.2 <- nn_analyzing_df %>%
+  pivot_wider(names_from = Method, values_from = MSE) %>%
+  group_by(Variable, beta_var) %>%
+  filter(Variable %in% c(6, 7)) %>%
+  summarize(AIC = mean(AIC, na.rm = T),
+            BIC = mean(BIC, na.rm = T),
+            LRT = mean(LRT, na.rm = T),
+            OLS = mean(OLS, na.rm = T)) 
+
+knitr::kable(table_4.2.1, "latex", caption = "Table 4.2.1: Variable and Method MSE")
+knitr::kable(table_4.2.2, "latex", caption = "Table 4.2.2: Method MSE With High and Low Variance in Variables 6 and 7")
+
+## MSE Ridgeline for 
+nn_analyzing_df %>%
+  filter(Variable %in% c(6,7)) %>%
+  mutate(Method = fct_relevel(Method, c("LRT", "BIC", "AIC", "OLS")),
+         Variable = factor(Variable)) %>%
+  ggplot(aes(x = MSE, y = Method, fill = Method)) +
+  geom_density_ridges(jittered_points = TRUE,
+    position = position_points_jitter(width = 0.05, height = 0),
+    point_shape = '|', point_size = 3, point_alpha = 0.3, alpha = 0.7) +
+  labs(title = "Figure 4.2.2: Variables 6 & 7 MSE Ridgeline Plot") +
+  facet_wrap(Variable~., scale = "free_x")
+```
+
+Figure 4.2.2 shows the distribution of MSE for variables 6 & 7. The distribution of MSE moves toward 0 and the spread of the distributions decrease as one progresses from least conservative to most conservative dimension selection techniques. The shape of the distribution of MSE is not necessary for inference, but demonstrates the overall performance of the technique. The relative outperformance of LRT is robust to changes in the other simulation conditions.
+
+However, LRT is not always the best dimension selection technique when some of the predictors are not normally distributed. Similar to the Phase 1 results, the best dimension selection technique is a function of the variation in the predictors. Figure 4.3.3 shows the MSE for each technique and variable excluding variables 6 and 7 when the response variation and predictor variation are modified. When the variation in the predictors is low, envelopes outperform OLS, and LRT is the best dimension selection criteria. 
+
+```{r, echo = F}
+## Shows predictor variance is the dominating factor
+nn_analyzing_df %>% 
+  filter(Variable != 6 & Variable != 7) %>%
+  mutate(norm_var = fct_recode(norm_var, "High Predictor Variation" = "high", "Low Predictor Variation" = "low"),
+         norm_error = fct_recode(norm_error, "High Noise" = "high", "Low Noise" = "low")) %>%
+  group_by(Variable, norm_var, Method, norm_error) %>%
+  summarize(MSE = mean(MSE)) %>%
+  ggplot(aes(x = Variable, y = MSE, fill = Method)) + 
+  geom_bar(stat = "identity", position = 'dodge') + 
+  facet_wrap(norm_error ~ norm_var, scales = "free_y") +
+  labs(title = "Figure 4.2.3")
+  
+```
+
+One important observation is the performance of the diferent methods for variable 9, which follows a T distribution. Note that envelopes outperform OLS in all scenarios, even when the variance of the response and normally distributed predictors changes. Figure 4.2.4 shows the outperformance of envelopes persists when the variance of the response and the T-distribution are changed. This tempers the results from phase 1. Both the T and normal distributions are symmetric, and the histograms are remarkably similar (see Appendix for histograms). Differentiating between a T and normal distribution can be difficult in practice, and the differences in performance of envelopes on these types of data is important to consider.
+
+```{r, echo = F}
+# Dimension selection criteria for T-Distribution
+nn_analyzing_df %>%
+  filter(Variable == 9) %>%
+  group_by(t_df, norm_error, Method) %>%
+  summarize(MSE = mean(MSE)) %>%
+  ggplot(aes(x = Method, y = MSE, fill = Method)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(t_df ~ norm_error, scale = "free_x") +
+  labs(title = "Figure 4.2.4: T distribution") +
+  coord_flip()
+
+```
+
+The story is reversed for the logistic variable. Figure 4.2.5 shows the MSE for variable 8 with high and low variability in the distribution and the response. In all circumstances, OLS outperforms envelope methods regardless of the dimension selection technique used. Given the results from Phase 1, this is not a surprise. The logistic distribution has more mass over a larger interval as compared to a normal or T distribution, and thus OLS is likely to outperform it in most scenarios. 
+
+```{r, echo = F}
+nn_analyzing_df %>%
+  filter(Variable == 8) %>%
+  group_by(logistic_var, norm_error, Method) %>%
+  summarize(MSE = mean(MSE)) %>%
+  ggplot(aes(x = Method, y = MSE, fill = Method)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(logistic_var ~ norm_error, scale = "free_x") +
+  labs(title = "Figure 4.2.5: Logistic Distribution") +
+  coord_flip()
+```
+
+Finally, Figure 4.2.5 shows the MSE of each technique for the five normally distributed predictors facted by response and predictor variation. The plot shows OLS outperforms envelopes when there is high variability in the predictors and low variability in the response. Much like the results in Phase 1, the dominating factor is predictor variation. These results also serve as a robustness check on the results obtained in Phase 1, as the findings persist after the addition of non-normally distributed predictors.
+
+```{r, echo = F}
+## Facets by more factors 
+nn_analyzing_df %>% 
+  filter(!Variable %in% c(6, 7, 8, 9)) %>%
+  group_by(Variable, norm_var, norm_error, Method) %>%
+  summarize(MSE = mean(MSE)) %>%
+  ggplot(aes(x = Variable, y = MSE, fill = Method)) + 
+  geom_bar(stat = "identity", position = 'dodge') + 
+  facet_wrap(norm_var ~ norm_error, scales = "free_y") +
+  labs(title = "Figure 4.2.5: Response Variation and Collinearity")
+```
+
+## Conclusion and Recommendations
+
+Phase 1 simulation study results indicate envelopes outperform OLS when there is etiher (1) a small sample size, (2) high response variation or (3) low variation in the predictors. Correlation among predictors and the number of predictors have smalle effects, but do not result in gains in envelopes over OLS. Furthermore, when envelopes outperform OLS, LRT is most often the best dimension selection criterion. Thus, when envelopes offer gains over OLS, using the most conservative dimension selection technique results in the greatest gains. 
+
+These findings are corroborated from the Phase 2 results. Envelopes substantially outperform OLS when the predictors follow a Beta or Gamma distribution, and LRT is the best selection criterion for those predictors. Envelopes also outperform variables that follow a T distribution regardless of the variability of the predictor and response.
+
+Whether predictor envelopes will outperform OLS is determined by the nature of the predictors and response and their correlation structure. It is unlikely that a practitioner will encounter data that follows the exact conditions examined in the simulations, so the findings will now be translated into an preliminary data exploration process to select the best methodology. This procedure will be demonstrated in the data application that follows. 
+
+The simplest factor to evaluate is the dimension of the data. Small samples or situations where $p ~ n$ will be best modeled with predictor envelopes. Variance and range of the predictors should be analyzewd first through summary statistics. Low variability and tight ranges indicate envelopes may offer advantages. Next, the mean squared error from an OLS regression ($SSE_{OLS}$) can be used as a rough measurement of the conditional variance of the response. If the MSE is high, this indicates envelopes are likely the better option. Combining this knowledge with $S_{\textbf{X}}$, one can make an informed decision about which technique to use. However, much like many areas of applied statistics, this requires a substantial amount of judgement and it will likely be an iterative process. 
+
+```{r, echo = F, include = F}
+cutpoint_df <- analyzing_df %>% 
+  group_by(Sample_size, Parameters, Predictor_Variance, Correlation, Noise, Method) %>%
+  summarize(MSE = mean(MSE)) %>%
+  pivot_wider(names_from = Method, values_from = MSE) %>%
+  nest(c("AIC", "BIC", "LRT", "OLS")) %>%
+  mutate(best = names(which.min(unlist(data)))) %>%
+  unnest(data)
+
+cutpoint_df %>%
+  group_by(Sample_size, Predictor_Variance, Noise, best) %>%
+  summarize(number = n()) %>%
+  filter(number != 0)
+
+cutpoint_df %>%
+  filter(best == "BIC")
+```
+
+
+# Application
+
+To demonstrate the power of predictor envelopes and illustrate the preliminary analytical process, predictor envelopes will be applied to estimating the resik premia on the Fama-French 5 factor model using Fama-Macbeth Regression (FMR). FMR is a widely used procedure to estimate the risk premia for financial assets in the Finance literature. The primary factor in the FFM is the excess return of the equity market over the risk-free-rate. The other four factors are the difference in returns of diversified portfolios sorted on book-value, size, operating profitability, and investment practices. The fifth factor is the equity market risk premium, which serves to condition the effect of each of the preceeding four factors. Details on the construction and estimation of the portfolios is included in the appendix. Below is a presentation of the Five Factor model:
+
+$R_{it} - R_{ft} = \alpha_{it} + \beta_{1}(R_{Mt} - R_{ft}) + \beta_{2}SML_{t} + \beta_{3}HML_{t} + \beta_{5}CMA_{t} + \beta_{6}RMW_{t} + \varepsilon_{it}$
+
+Where\
+$R_{it}$ is the return of the ith stock in period t\
+$R_{ft}$ is the risk free rate in period t\
+$R_{Mt} - R_{ft}$ is the excess return of the equity market over the risk free rate in period t\
+$SML_{t}$ is the average excess return of portfolios of small stocks over portfolios of large stocks, measured by market capitalization t\
+$HML_{t}$ is the avearge excess return of portfolios of low market-to-book stocks over portfolios of high market-to-book stocks in period t\
+$CMA_{t}$ is the average excess return of portfolios of conservative investment firms over portfolios of aggressive investment firms in period t\
+$RMW_{t}$ is the average excess return of portfolios of firms with robust operating profit margins over portfolios of firms with weak operating profit margins in period t\
+$\alpha_{it}$ captures the excess return of the security in time t\
+$\varepsilon_{it}$ is ~ Normal(0, $\sigma^2I$) \
+
+FMR is the main technique used to estimate the loadings on each factor of interest. This requires a two-step estimation procedure. To begin FMR, let $R \in \mathbb{R}^{t x s}$ contain the returns of $s$ securities over $t$ periods, and let $F \in \mathbb{R}^{t x f}$ contain the $f$ factors of interest over $t$ periods. The first step involves estimating $s$ time series regressions:
+
+$R_{t} - R_{ft} = \alpha_{t} + \beta_{1}(R_{Mt} - R_{ft}) + \beta_{2}SML_{t} + \beta_{3}HML_{t} + \beta_{5}CMA_{t} + \beta_{6}RMW_{t} + \varepsilon_{t}$
+
+Each $\beta$ vector from all time-series regressions are retained, and let $B \in \mathbb{R}^{s x f}$ contain all these estimates. The second step uses $B$ as the predictor matrix for $t$ cross-section regressions of asset returns. The coefficient matrix $\lambda$ is estimated in the following manner:
+
+$R_{i} - R_{f} = \alpha_{i} + \lambda_{1}\beta_{(R_{M} - R_{f})} + \lambda_{2}\beta_{SML}+ \lambda_{3}\beta_{HML} + \lambda_{4}\beta_{CMA} + \lambda_{5}\beta_{RMW} + \varepsilon_{i}$.
+
+The $\lambda_{k}$ are aggregated in $\Lambda \in \mathbb{R}^{t x f}$ matrix. The loading on each factor is the average $\lambda_{j}$ over time, and are calculated as $Loading_{j} = \frac{1}{t}\sum_{k = 1}^{t}\lambda_{kj}$. 
+
+Predictor envelopes are likely to improve estimates in this procedure for several reasons. First, Table 5.1 shows the standard deviation for each of the five factors as well as the mean squared error of the residual return for Apple, Inc. from a OLS regression. There is relatively little variation in the predictors, indicating a predictor envelope may be beneficial. Furthermore, the standard deviation of the residuals is relatively large, also indicating envelopes may offer advantages.
+
+```{r EDA for FM, echo = F}
+# ANOVA
+aapl <- data.frame(ret_reg[, 1], fact_reg, row.names = NULL)
+aapl_lm <- lm(AAPL ~., data = aapl)
+
+# Predictor Variability
+fact_reg %>%
+  data.frame(row.names = NULL) %>%
+  summarize_all(.funs = sd) %>%
+  cbind("AAPL SD" = sd(aapl_lm$residuals)) %>%
+  t() %>% 
+  knitr::kable("latex") %>%
+  print()
+```
+
+Phase 2 of the simulations demonstrated the distribution of the predictors impacts how well envelopes perform. Figure 5.1 shows histograms of the five factors. These plots show the factors have heavy tails, and some variables such as $(R_{Mt} - R_{ft})$ have a positive skew. This further indicates envelopes will outperform OLS during this modeling task. The sample size, number of predictors, correlation matrix do not further suggest envelopes over OLS, but are still important to consider.  
+
+```{r, cache = T}
+ fact_reg %>%
+  data.frame(row.names = NULL) %>%
+  pivot_longer(cols = c("Mkt.RF", "SMB", "HML", "RMW", "CMA")) %>%
+  ggplot(aes(x = value, fill = name)) +
+  geom_histogram() +
+  facet_wrap(name~., scale = "free_x")
+
+# Correlation Matrix
+#fact_reg %>% cor() %>% xtable() %>% print()
+```
+```{r Stage 1 Application, echo = F, include = F, cache = T}
+# OLS
+ols_1 <- stage1.ols.fm.estimator(ret_reg, fact_reg)
+beta_df_ols <- data.frame(ols_1$Beta)
+
+# Envelopes
+## AIC
+stage1_results_aic <- stage1.fm.estimator(ret_reg, fact_reg, criteria = 1)
+beta_df_aic <- data.frame(stage1_results_aic$Beta)
+
+## BIC
+stage1_results_bic <- stage1.fm.estimator(ret_reg, fact_reg, criteria = 2)
+beta_df_bic <- data.frame(stage1_results_bic$Beta)
+
+## LRT
+stage1_results_lrt <- stage1.fm.estimator(ret_reg, fact_reg, criteria = 3)
+beta_df_lrt <- data.frame(stage1_results_lrt$Beta)
+
+# Calculates average SE ratio
+ratio.mean <- function(dlist, pos = 2){return(apply(dlist[[pos]], 2, mean))}
+```
+
+After the preliminary analysis, the coefficients from the first stage of FMR can be estimated. The Renvlp package in R returns the ratio of the estimated standard errors form envelopes and OLS. The average ratio for each factor employing all dimension selection techniques is shown in table 5.2. All dimension selection criteria have similar gains in efficiency over OLS, but LRT has greater gains in efficiency. Also note that the largest improvement comes for CMA, which has the lowest standard deviation as identified in table 5.1. Gains in efficiency at this stage have a multiplicative effect for the second phase, as the estimated coefficients are used as predictors. Thus, estimation errors made in phase 1 are propogated throughout the analysis. 
+
+```{r Table 5.2, echo = F}
+# Table of average
+data.frame(rbind("AIC" = ratio.mean(stage1_results_aic), 
+      "BIC" = ratio.mean(stage1_results_bic), 
+      "LRT" = ratio.mean(stage1_results_lrt))) %>%
+  rename(Mkt.RF = X1, SMB = X2, HML = X3, RMW = X4, CMA = X5) %>%
+  knitr::kable("latex")
+```
+
+Before beginning phase 2, another preliminary analysis of the predictors is in order. Table 5.3 shows the standard deviation for the estimated betas for each factor and dimension selection criteria. This table shows there is very low variation in the estimated betas, indicating envelopes will offer substantial advantages. The standard error of the residuals from an OLS model for the first year of cross-sectional returns is approximately 7.60, indicating there is a substantial amount of varation in the response, further justifying envelopes. Figure 5.2 shows kernel density plots of the betas for each variable from the OLS fit. These plots show the estimated betas have heavy tails, and slightly skewed distributions, further suggesting envelopes will outperform.
+
+```{r Stage 2 EDA, echo = F}
+# Standard Deviation of Betas--Used as predictors in second stage
+data.frame("OLS" = (summarize_all(beta_df_ols, .funs = sd) %>% t()),
+      "AIC" = (summarize_all(beta_df_aic, .funs = sd) %>% t()), 
+      "BIC" = (summarize_all(beta_df_bic, .funs = sd) %>% t()),
+      "LRT" = (summarize_all(beta_df_lrt, .funs = sd) %>% t()),
+      row.names = c("Mkt.RF", "SMB", "HML", "RMW", "CMA")) %>%
+  knitr::kable("latex")
+
+# MSE from stage 2 calc with betas
+stage2_summary_df <- data.frame(t(ret_reg[1,]), beta_df_aic, row.names = NULL) %>%
+  rename(Return = 1)
+sd(lm(Return ~., data = stage2_summary_df)$residuals)
+
+# Kernel Density Plots of Betas
+beta_df_ols %>% 
+  rename(Mkt.RF = X1, SMB = X2, HML = X3, RMW = X4, CMA = X5) %>%
+  pivot_longer(cols = c(1, 2, 3, 4, 5)) %>%
+  mutate(name = factor(name)) %>%
+  ggplot(aes(x = value, fill = name)) +
+  geom_density_line() +
+  facet_wrap(name~., scale = "free_x") +
+  labs(title = "Figure 5.2: OLS Beta Histograms")
+```
+```{r Stage 2 Application, echo = F, cache = T}
+# OLS
+ols_2 <- stage2.ols.fm.estimator(unlist(ols_1$Beta), ret_reg)
+
+# Envelopes
+## AIC
+stage2_results_aic <- stage2.fm.estimator(beta_df_aic, ret_reg, criteria = 1)
+
+## BIC
+stage2_results_bic <- stage2.fm.estimator(beta_df_bic, ret_reg, criteria = 2)
+
+## LRT
+stage2_results_lrt <- stage2.fm.estimator(beta_df_bic, ret_reg, criteria = 3)
+```
+
+Table 5.4 contains the standard error ratios from the second phase of the Fama-Macbeth procedure. Envelopes are substantially more efficient for all of the factors, and LRT produces the biggest gains in efficiency. Most notably is the 50X reduction in standard errors for the variable $\beta_{(R_{M} - R_{f})}$. The results from the simulation study suggest envelopes have comparable levels of bias to that of OLS, indicating this a pure gain in precision. 
+
+```{r Table 5.4, echo = F}
+# Computes the average SE ratio for each variable
+data.frame(rbind(summarize_all(data.frame(stage2_results_aic$Loading_Ratios), .funs = mean), 
+      summarize_all(data.frame(stage2_results_bic$Loading_Ratios), .funs = mean),
+      summarize_all(data.frame(stage2_results_lrt$Loading_Ratios), .funs = mean)), 
+      row.names = c("AIC", "BIC", "LRT")) %>%
+  rename(Mkt.RF = X1, SMB = X2, HML = X3, RMW = X4, CMA = X5) %>%
+  knitr::kable("latex")
+```
+
+The estimtated loadings and associated standard errors can be found in table 5.5. The most important takeaway is the difference in magnitude and signs of the loadings resulting from OLS and envelope methods. Interestingly, the loadings from the envelope methods align more closely to those esimated by Fama and French (2015), despite using substantially fewer observations than the authors used. This is a powerful result for practitioners.
+
+```{r, echo = F}
+loader <- function(df_list, pos = 1, funct = mean){
+  return(df_list[pos] %>%
+  data.frame() %>%
+  summarize_all(.funs = funct))
+}
+
+loading_df <- data.frame(rbind(loader(ols_2), loader(stage2_results_aic), loader(stage2_results_bic), loader(stage2_results_lrt)), row.names = c("OLS", "AIC", "BIC", "LRT")) %>%
+  rename(Mkt.RF = Loadings.1, SMB = Loadings.2, HML = Loadings.3, RMW = Loadings.4, CMA = Loadings.5)
+
+loading_se <- data.frame(rbind(loader(ols_2, funct = sd), 
+      loader(stage2_results_aic, funct = sd), 
+      loader(stage2_results_bic, funct = sd), 
+      loader(stage2_results_lrt, funct = sd)), row.names = c("OLS", "AIC", "BIC", "LRT")) %>%
+  rename(Mkt.RF = Loadings.1, SMB = Loadings.2, HML = Loadings.3, RMW = Loadings.4, CMA = Loadings.5)
+
+# Looading and standard error table
+rbind(loading_df, loading_se) %>%
+  knitr::kable("latex")
+```
+
+# Summary
+
+Envelopes have the potential to increase the efficiency of OLS many-fold. Simulation results indicate that envelopes offer advantages when predictor variance is low, response variation is high, in small sample sizes, and when the predictors are not normally distributed. Deciding when to employ envelope methods and deciding which dimension selection technique to employ should be based on a preliminary analysis of the predictors and the correlation structure of the model. When envelopes offer advantages over OLS, the best dimension selection technique is the likelihood-ratio test. Furthermore, OLS has the potential to improve existing estimation techniques, particularly Fama-Macbeth regression for estimating the risk premia for financial securities.
+
+# References
+
+# Appendix
+
+## Mathematical Supplement
+
+Envelopes result from the following definitions:
+
+*Definition 1* (Cook et al. 2013). A subspace $\mathcal{R} \subseteq \mathbb{R}^p$ is a reducing subspace of $\textbf{M}$ if $\mathcal{R}$ decomposes $\textbf{M}$ as $M = \textbf{P}_{\mathcal{R}}\textbf{M}\textbf{P}_{\mathcal{R}} + \textbf{Q}_{\mathcal{R}}\textbf{M}\textbf{Q}_{\mathcal{R}}$. If $\mathcal{R}$ is a subspace of $\textbf{M}$, $\mathcal{R}$ reduces $\textbf{M}$.
+
+*Definition 2* (Cook et al. 2010). Let $\mathcal{B} \subseteq span(\textbf{M})$. The $\textbf{M}$ envelope of $\mathcal{B}$, denoted by $\mathcal{E}_{\textbf{M}(\mathcal{B})}$, is the intersection of all reducing subspaces of $\textbf{M}$ that contain $\mathcal{B}$.
+
+## Tables and Figures
+
+```{r Summarizing Tables, echo = F}
+# Overall Effects
+analyzing_df %>%
+  group_by(Method) %>%
+  summarize(MSE = mean(MSE), Bias = mean(Bias), Variance = mean(Variance))
+
+# Effects of Noise
+analyzing_df %>%
+  group_by(Noise, Method) %>%
+  summarize(MSE = mean(MSE), Bias = mean(Bias), Variance = mean(Variance))
+
+# Effects of Predictor Variance
+analyzing_df %>%
+  group_by(Predictor_Variance, Method) %>%
+  summarize(MSE = mean(MSE), Bias = mean(Bias), Variance = mean(Variance))
+
+# Summarizing Methods by Sample Size
+analyzing_df %>%
+  pivot_wider(names_from = Method, values_from = c(MSE, Bias, Variance)) %>%
+  group_by(Sample_size) %>%
+  summarize(Bias_AIC = mean(Bias_AIC, na.rm = T), 
+            Bias_BIC = mean(Bias_BIC, na.rm = T), 
+            Bias_LRT = mean(Bias_LRT, na.rm = T), 
+            Bias_OLS = mean(Bias_OLS, na.rm = T),
+            Variance_AIC = mean(Variance_AIC, na.rm = T), 
+            Variance_BIC = mean(Variance_BIC, na.rm = T), 
+            Variance_LRT = mean(Variance_LRT, na.rm = T), 
+            Variance_OLS = mean(Variance_OLS, na.rm = T),
+            MSE_AIC = mean(MSE_AIC, na.rm = T), 
+            MSE_BIC = mean(MSE_BIC, na.rm = T), 
+            MSE_LRT = mean(MSE_LRT, na.rm = T), 
+            MSE_OLS = mean(MSE_OLS, na.rm = T)) %>%
+  knitr::kable("latex")
+
+# Summarizing Methods by Predictor Variance
+analyzing_df %>%
+  pivot_wider(names_from = Method, values_from = c(MSE, Bias, Variance)) %>%
+  group_by(Predictor_Variance) %>%
+  summarize(Bias_AIC = mean(Bias_AIC, na.rm = T), 
+            Bias_BIC = mean(Bias_BIC, na.rm = T), 
+            Bias_LRT = mean(Bias_LRT, na.rm = T), 
+            Bias_OLS = mean(Bias_OLS, na.rm = T),
+            Variance_AIC = mean(Variance_AIC, na.rm = T), 
+            Variance_BIC = mean(Variance_BIC, na.rm = T), 
+            Variance_LRT = mean(Variance_LRT, na.rm = T), 
+            Variance_OLS = mean(Variance_OLS, na.rm = T),
+            MSE_AIC = mean(MSE_AIC, na.rm = T), 
+            MSE_BIC = mean(MSE_BIC, na.rm = T), 
+            MSE_LRT = mean(MSE_LRT, na.rm = T), 
+            MSE_OLS = mean(MSE_OLS, na.rm = T))%>%
+  knitr::kable("latex")
+
+
+# Summarizing Methods by Correlation and Method
+analyzing_df %>%
+  pivot_wider(names_from = Correlation, values_from = c(MSE, Bias, Variance)) %>%
+  group_by(Method) %>%
+  summarize(Bias_low = mean(Bias_low, na.rm = T),
+            Bias_medium = mean(Bias_medium, na.rm = T),
+            Bias_high = mean(Bias_high, na.rm = T),
+            Variance_low = mean(Variance_low, na.rm = T),
+            Variance_medium = mean(Variance_medium, na.rm = T),
+            Variance_high = mean(Variance_high, na.rm = T), 
+            MSE_low = mean(MSE_low, na.rm = T), 
+            MSE_medium = mean(Variance_medium, na.rm = T),
+            MSE_high = mean(MSE_high, na.rm = T)) %>%
+  knitr::kable("latex")
+```
+
+```{r Figures, echo = F}
+n_t_df <- data.frame("Distribution" = c(rep("Normal", 10000), rep("T", 10000)), 
+           "Values" = c(rnorm(10000), rt(10000, 20)))
+
+n_t_df %>%
+  mutate(Distribution = factor(Distribution)) %>%
+  ggplot(aes(x= Values, color = Distribution)) +
+  geom_freqpoly(bins = "40") 
+```
+
+
+```{r}
+# Bias plots
+
+## Overall Bias
+nn_analyzing_df %>% 
+  group_by(Method) %>%
+  summarize(MSE = sum(MSE), Bias = sum(Bias), Variance = sum(Variance)) %>%
+  ggplot(aes(x = Method, y = Bias, fill = Method)) + 
+  geom_bar(stat = "identity")
+
+## Bias by Variable
+nn_analyzing_df %>% 
+  group_by(Variable, Method) %>%
+  summarize(Bias = sum(Bias)) %>%
+  ggplot(aes(x = Variable, y = Bias, fill = Method)) + 
+  geom_bar(stat = "identity", position = 'dodge')
+```
+

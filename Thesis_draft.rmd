@@ -21,6 +21,7 @@ library(xts)
 library(ggridges)
 library(broom)
 library(knitr)
+library(kableExtra)
 
 load("all_data.rda")
 
@@ -262,7 +263,8 @@ names(table_3.1) <- c("Sample Size",
                           "Predictor Variance", 
                           "Residual Distribution")
 
-table_3.1 %>% knitr::kable()
+table_3.1 %>% knitr::kable("latex") %>% 
+  column_spec(2:3, width = "3cm")
 ```
 
 Only the parameters specified in Table 3.1 was were assumed to be fixed for a simulation run. For each dataset, $\sigma^{2}_X$ was simulated from a uniform distribution using the upper and lower limits specified in table 3.1. Other inputs into the model were simulated from the uniform distribution to average out their effects; $\mu_X$ was simulated with upper and lower limits of 5 and 15, respectively, and $\beta$ was simulated with upper and lower limits of -2 and 2, respectively. $Y$ was constructed as the inner product of $\beta$  and $X$ plus the random vector specified in the table 3.1. 
@@ -271,7 +273,7 @@ Only the parameters specified in Table 3.1 was were assumed to be fixed for a si
 
 The second phase examined the performance of each dimension selection technique when some predictor variables follow non-normal distrbutions. Similar to phase 1, a fully factorial design was implemented, and the factor levels are presented in Table 3.2. Datasets with 100 observations were simulated with predictors from the Gamma, Beta, logistic, and T distributions along with five predictors from the multivariate normal distribution. Correlation among the non-normal variables is computationally intensive, so the variance of the predicotrs was the main characteristic investigated.
 
-```{r}
+```{r, echo = F}
 table_3.2 <- data.frame(rbind(c("0 to 0.3", "N(0, 100)", "Gamma", "scale = 1 & shape = 2", "shape = 5, scale = 10"),
       c("0.3 to 0.7", "N(0, 400)", "Beta", "scale = 1 & shape = 2", "shape = 5, scale = 10"),
       c("0.7 to 1", "", "Logistic", "1", "10"),
@@ -283,7 +285,8 @@ names(table_3.2) <- c("Predictor Correlation (Absolute Value)",
                       "Low Variance", 
                       "High Variance")
 
-table_3.2 %>% knitr::kable()
+table_3.2 %>% knitr::kable("latex") %>% 
+  column_spec(1:3, width = "3.5cm")
 ```
 
 Similar to phase 1, inputs for the simulation that are not specified in Table 3.2 were simulated from a uniform distribution with the same upper and lower limits.  
@@ -311,7 +314,7 @@ MSE & $\frac{1}{n_{sim}}\sum_{i = 1}^{n_{sim}}  (\hat{\theta_{i}} - \bar{\theta}
 
 ## Phase 1
 
-First, the results from phase 1 suggest OLS outperforms envelopes when the data are relatively well behaved. For example, Figure 1 shows the MSE of OLS is smaller than the MSE of envelopes when the sample size is large with few collinear predictors and little variation in the response. This figure shows OLS mostly has the lowest MSE regardless of the number of predictors and the correlation among them when the sample size is large, predictor variation is high, and there is little variation in the response. 
+First, the results from phase 1 suggest OLS outperforms envelopes when the data are relatively well behaved. For example, Figure 4.1 shows the MSE of OLS is smaller than the MSE of envelopes when the sample size is large with few collinear predictors and little variation in the response. This figure shows OLS mostly has the lowest MSE regardless of the number of predictors and the correlation among them when the sample size is large, predictor variation is high, and there is little variation in the response. 
 
 Envelopes are on par with OLS where there are many highly correlated predictors, but in general under these conditions envelopes do not outperform OLS. In some scenarios envelopes actually perform worse, and the degree of underperformance is a function of the dimension selection criteria used and how small of an envelope it tends to estimate.
 
@@ -326,11 +329,12 @@ analyzing_df %>%
   facet_wrap(Parameters ~ Correlation) +
   geom_bar(stat = 'identity') +
   ylab("MSE") +
-  labs(title = "Figure 1: All Sample Sizes, High Predictor Variance, Low Response Variation") +
+  labs(title = "Figure 4.1",
+       subtitle = "All Sample Sizes, High Predictor Variance, Low Response Variation") +
   theme_classic()
 ```
 
-Figure 4.2 shows the MSE for each techinque with sample sizes of either 75 or 250 with high response variation, faceted over the number of and correlation of predictors. Similar to Figure 4.1, envelopes underperform OLS when there are relatively few predictors, regardless of their correlation. However, envelopes begin to eek out a small advantage when there are many predictors. The difference between OLS and envelopes is small, so the increased performance is likely not worth the additional complexity of using envelopes, but this figure shows collinearity has the lowest impact on the relative performance of the dimension selecton criteria.
+Figure 4.2 shows the MSE for each techinque with sample sizes of either 75 or 250 with high response variation, faceted over the number of and correlation of predictors. Similar to Figure 4.1, envelopes underperform OLS when there are relatively few predictors, regardless of their collinearity. However, envelopes begin to eek out a small advantage when there are many predictors. The difference between OLS and envelopes is small, so the increased performance is likely not worth the additional complexity of using envelopes, but this figure shows collinearity has the lowest impact on the relative performance of the dimension selecton criteria.
 
 ```{r Figure 4.2, echo = F}
 analyzing_df %>%
@@ -343,12 +347,12 @@ analyzing_df %>%
   facet_wrap(Parameters ~ Correlation) +
   geom_bar(stat = 'identity') +
   ylab("MSE") +
-  labs(title = "Figure 4: Large Sample Size",
-  subtitle = "High Predictor Variance, High Response Variation") +
+  labs(title = "Figure 4.2",
+  subtitle = "Large Sample Size, High Predictor Variance, High Response Variation") +
   theme_classic()
 ```
 
-Envelopes offer substantial advantages over  
+As the sample size decreases furthrer, envelopes begin to offer substantial advantages. Figure 4.3 shows the MSE for datasets with 25 observations, high response and predictor variation, faceted over the number of predictors and correlation. Comparing this figure with the previous plot, it can be seen that as the sample size becomes increasingly small envelopes, begin to offer substantial advantages over OLS. The the outperformance is dependent upon the dimension selection criteria used. Note that once the variation in the response increases, the effect of the number of predictors and coollinearity is negligible becomes negligible regardless of sample size. Also note LRT has the lowest MSE in all scenarios, suggesting a conservative enevlope offers great advantages. Lastly, the performance of envelopes is highly dependent upon the variation in the response, with greater variability leading to greater outperformance by envelopes. 
 
 ```{r Figure 4.3, echo = F}
 analyzing_df %>%
@@ -361,89 +365,58 @@ analyzing_df %>%
   facet_wrap(Parameters ~ Correlation) +
   geom_bar(stat = 'identity') +
   ylab("MSE") +
-  labs(title = "Figure 5: Small Sample Size",
-  subtitle = "High Predictor Variance, High Response Variation") +
+  labs(title = "Figure 4.3",
+  subtitle = "Small Sample Size, High Predictor Variance, High Response Variation") +
   theme_classic()
 ```
 
-Envelope methods begin to outperform OLS in large samples when there are many predictors with little variation. Surprisingly, there is little impact from the collinearity of the predictors.
+Figure 4.4 fully demonstrates the change in performance of each dimension selection criteria as the sample size changes when there is high response variation and high variation in the predictors. Note the stark reversal in the advantages of envelopes once the sample size reaches 75, and definitive underperformance with samples of 250. This figure indicates sample size impacts the performance of envelopes in a non-linear way; envelopes offer advantages for very small samples, but those advantages begin to evaporate as the number of observations increases.
 
 ```{r Figure 4.4, echo = F}
 analyzing_df %>%
-  filter(Sample_size == 250, Predictor_Variance == 'low', Noise == 'low') %>%
-  mutate(Correlation = fct_relevel(Correlation, c('low', 'medium', 'high')),
-         Parameters = fct_recode(Parameters, '10%' = '0.1', '30%' = '0.3')) %>%
-  group_by(Method, Parameters, Correlation) %>%
-  summarize(Bias = mean(Bias), SE = mean(Variance), MSE = mean(MSE)) %>%
-  ggplot(aes(x = Method, y = MSE, fill = Method)) + 
-  facet_wrap(Parameters ~ Correlation) +
-  geom_bar(stat = 'identity') +
-  ylab("MSE") +
-  labs(title = "Figure 6: Large Sample Size",
-  subtitle = "Low Predictor Variance, Low Response Variation") +
-  theme_classic()
-```
-
-Figure 4.5 shows the MSE of each technique when the variation in the predictors is low and there is little variation in the response. The advantages of LRT become more pronounced as the data become less "friendly".
-
-```{r Figure 4.5, echo = F}
-analyzing_df %>%
-  filter(Sample_size %in% c(25, 75), Predictor_Variance == 'low', Noise == 'low') %>%
-  mutate(Correlation = fct_relevel(Correlation, c('low', 'medium', 'high')),
-         Sample_size = factor(Sample_size)) %>%
+  filter(Predictor_Variance == 'high', Noise == 'high') %>%
+  mutate(sample_size = factor(Sample_size)) %>%
   group_by(Method, Sample_size) %>%
   summarize(Bias = mean(Bias), SE = mean(Variance), MSE = mean(MSE)) %>%
   ggplot(aes(x = Method, y = MSE, fill = Method)) + 
   facet_wrap(. ~ Sample_size, scales = "free_y", nrow = 1) +
   geom_bar(stat = 'identity') +
   ylab("MSE") +
-  labs(title = "Figure 7: Small and Medium Sample Size",
-  subtitle = "Low Predictor Variance, Low Response Variation") +
+  labs(title = "Figure 4.4: Advantages of Envelopes",
+  subtitle = "All Sample Sizes, High Predictor Variance, High Response Variation") +
   theme_classic()
 ```
 
-When the data are the least "friendly"--high variation in the response and many correlated predictors with low variability--envelope methods offer large advantages over OLS. Moreover, LRT is the best dimension selection criteria in these scenarios. Also note the dramatic reduction in MSE in small sample sizes. MSE for OLS with a sample size of 25 is 15.64, whereas the MSE using LRT to select the predictor envelope resilts in a MSE of 3.23. 
+The last factor to examine is variability in the predictors. Figure 4.5 shows the MSE of each technique faceted by sample size and response variation when the variation in the predictors is low. When there is little variation in the response, envelopes offer advantages, but that advantage is tempered as the sample size increases. However, when the variability in the response increases, LRT has dominant outperformance, although sample size does temper its effectiveness. Note that LRT is the most conservative dimension selection technique, indicating that when envelopes can offer advantages, using the smallest dimension envelope leads to the best performance. Furthermore, these results suggest that envelopes are best when the data are the least "friendly"--high variation in the response and many correlated predictors with low variability. Also note the dramatic reduction in MSE in small sample sizes.
 
 ```{r Figure 4.6, echo = F}
 analyzing_df %>%
-  filter(Predictor_Variance == 'low', Noise == 'high') %>%
-  mutate(Correlation = fct_relevel(Correlation, c('low', 'medium', 'high')),
-         Sample_size = factor(Sample_size)) %>%
-  group_by(Method, Sample_size) %>%
-  summarize(Bias = mean(Bias), SE = mean(Variance), MSE = mean(MSE)) %>%
+  filter(Predictor_Variance == 'low') %>%
+  mutate(Sample_size = factor(Sample_size),
+         Noise = fct_relevel(factor(Noise), "low", "high")) %>%
+  group_by(Method, Noise, Sample_size) %>%
+  summarize(MSE = mean(MSE)) %>%
   ggplot(aes(x = Method, y = MSE, fill = Method)) + 
-  facet_wrap(. ~ Sample_size, scales = "free_y", nrow = 1) +
+  facet_wrap(Noise ~ Sample_size, scales = "free_y", nrow = 2) +
   geom_bar(stat = 'identity') +
   ylab("MSE") +
-  labs(title = "Figure 4.6: Advantages of Envelopes",
+  labs(title = "Figure 4.5",
   subtitle = "Low Predictor Variance, High Response Variation") +
   theme_classic()
 ```
-```{r, echo = F}
+
+```{r Table 4.1, echo = F}
+# Build this out as a table to summarize figure 4.5
 analyzing_df %>%
   filter(Sample_size == 25, Predictor_Variance == 'low', Noise == 'high') %>%
   mutate(Correlation = fct_relevel(Correlation, c('low', 'medium', 'high')),
          Sample_size = factor(Sample_size)) %>%
   group_by(Method, Sample_size) %>%
   summarize(Bias = mean(Bias), SE = mean(Variance), MSE = mean(MSE)) %>%
-  knitr::kable()
+  knitr::kable() 
 ```
 
-```{r, echo = F}
-analyzing_df %>%
-  filter(Sample_size == 75, Parameters == 0.1, Predictor_Variance == 'low', 
-         Correlation == 'high', Noise == 'low') %>%
-  group_by(Method) %>%
-  summarize(Bias = mean(Bias), SE = mean(Variance), MSE = mean(MSE))  %>%
-  ggplot(aes(x = Method, y = MSE, fill = Method)) +
-  geom_bar(stat = 'identity') +
-  labs(title = "Figure 9: Advantages of BIC", 
-       subtitle = "75 Observations, 8 Highly Collinear Predictors with Low Variability, Low Variability in the Response") +
-  theme_classic()
-  
-```
-
-The best dimension selection criteria for normally distributed predictors is a function of the structure of the data, with the most important factor being the variation in the predictors. Low variability in the predictors makes envelopes more efficient than OLS. As seen from the above figures, LRT testing is often the best dimension selection criteria in these scenarios, and if often the best choice when the data are the most "poorly" behaved. However, LRT doesn't always have superior performance. Figure 9 shows that BIC has a lower MSE than AIC and LRT whent the data conditions aren't as severe. Thus, determining which dimension selection criteria is best for a given modeling scenario should be an iterative process. 
+The best dimension selection criteria for normally distributed predictors is dependent on the structure of the data, with the most important factor being the variation in the predictors. Low variability in the predictors makes envelopes more efficient than OLS. As seen from the above figures, LRT testing is often the best dimension selection criteria when the variability in the predictors is low. High variability in the reponse also leads to gains for envelopes, but their outperformance is tempered by sample size. Generally speaking, envelopes will outperform in small samples when the variability in the response is high. Most interestingly, the number of predictors and collinearity minimally impact the performance of envelopes. Thus, the relative variaiblity of the response and predictors is important to consider when the data are normally distributed. 
 
 ## Phase 2
 
@@ -484,8 +457,9 @@ table_4.2.2 <- nn_analyzing_df %>%
             LRT = mean(LRT, na.rm = T),
             OLS = mean(OLS, na.rm = T)) 
 
-knitr::kable(table_4.2.1, "latex", caption = "Table 4.2.1: Variable and Method MSE")
-knitr::kable(table_4.2.2, "latex", caption = "Table 4.2.2: Method MSE With High and Low Variance in Variables 6 and 7")
+knitr::kable(table_4.2.1, "latex", caption = "Table 4.2.1: Variable and Method MSE") 
+knitr::kable(table_4.2.2, "latex", 
+             caption = "Table 4.2.2: Method MSE With High and Low Variance in Variables 6 and 7") 
 
 ## MSE Ridgeline for 
 nn_analyzing_df %>%
@@ -632,13 +606,12 @@ fact_reg %>%
   summarize_all(.funs = sd) %>%
   cbind("AAPL SD" = sd(aapl_lm$residuals)) %>%
   t() %>% 
-  knitr::kable("latex") %>%
-  print()
+  knitr::kable("latex")
 ```
 
 Phase 2 of the simulations demonstrated the distribution of the predictors impacts how well envelopes perform. Figure 5.1 shows histograms of the five factors. These plots show the factors have heavy tails, and some variables such as $(R_{Mt} - R_{ft})$ have a positive skew. This further indicates envelopes will outperform OLS during this modeling task. The sample size, number of predictors, correlation matrix do not further suggest envelopes over OLS, but are still important to consider.  
 
-```{r, cache = T}
+```{r, cache = T, echo = F}
  fact_reg %>%
   data.frame(row.names = NULL) %>%
   pivot_longer(cols = c("Mkt.RF", "SMB", "HML", "RMW", "CMA")) %>%
@@ -647,7 +620,7 @@ Phase 2 of the simulations demonstrated the distribution of the predictors impac
   facet_wrap(name~., scale = "free_x")
 
 # Correlation Matrix
-#fact_reg %>% cor() %>% xtable() %>% print()
+fact_reg %>% cor() %>% kable() %>% print()
 ```
 ```{r Stage 1 Application, echo = F, include = F, cache = T}
 # OLS
@@ -679,7 +652,7 @@ data.frame(rbind("AIC" = ratio.mean(stage1_results_aic),
       "BIC" = ratio.mean(stage1_results_bic), 
       "LRT" = ratio.mean(stage1_results_lrt))) %>%
   rename(Mkt.RF = X1, SMB = X2, HML = X3, RMW = X4, CMA = X5) %>%
-  knitr::kable("latex")
+  knitr::kable("latex") 
 ```
 
 Before beginning phase 2, another preliminary analysis of the predictors is in order. Table 5.3 shows the standard deviation for the estimated betas for each factor and dimension selection criteria. This table shows there is very low variation in the estimated betas, indicating envelopes will offer substantial advantages. The standard error of the residuals from an OLS model for the first year of cross-sectional returns is approximately 7.60, indicating there is a substantial amount of varation in the response, further justifying envelopes. Figure 5.2 shows kernel density plots of the betas for each variable from the OLS fit. These plots show the estimated betas have heavy tails, and slightly skewed distributions, further suggesting envelopes will outperform.
@@ -691,7 +664,7 @@ data.frame("OLS" = (summarize_all(beta_df_ols, .funs = sd) %>% t()),
       "BIC" = (summarize_all(beta_df_bic, .funs = sd) %>% t()),
       "LRT" = (summarize_all(beta_df_lrt, .funs = sd) %>% t()),
       row.names = c("Mkt.RF", "SMB", "HML", "RMW", "CMA")) %>%
-  knitr::kable("latex")
+  knitr::kable("latex") 
 
 # MSE from stage 2 calc with betas
 stage2_summary_df <- data.frame(t(ret_reg[1,]), beta_df_aic, row.names = NULL) %>%
@@ -732,7 +705,7 @@ data.frame(rbind(summarize_all(data.frame(stage2_results_aic$Loading_Ratios), .f
       summarize_all(data.frame(stage2_results_lrt$Loading_Ratios), .funs = mean)), 
       row.names = c("AIC", "BIC", "LRT")) %>%
   rename(Mkt.RF = X1, SMB = X2, HML = X3, RMW = X4, CMA = X5) %>%
-  knitr::kable("latex")
+  knitr::kable("latex") 
 ```
 
 The estimtated loadings and associated standard errors can be found in table 5.5. The most important takeaway is the difference in magnitude and signs of the loadings resulting from OLS and envelope methods. Interestingly, the loadings from the envelope methods align more closely to those esimated by Fama and French (2015), despite using substantially fewer observations than the authors used. This is a powerful result for practitioners.
@@ -755,7 +728,7 @@ loading_se <- data.frame(rbind(loader(ols_2, funct = sd),
 
 # Looading and standard error table
 rbind(loading_df, loading_se) %>%
-  knitr::kable("latex")
+  knitr::kable("latex") 
 ```
 
 # Summary
@@ -853,6 +826,17 @@ n_t_df %>%
   mutate(Distribution = factor(Distribution)) %>%
   ggplot(aes(x= Values, color = Distribution)) +
   geom_freqpoly(bins = "40") 
+
+analyzing_df %>%
+  filter(Sample_size == 75, Parameters == 0.1, Predictor_Variance == 'low', 
+         Correlation == 'high', Noise == 'low') %>%
+  group_by(Method) %>%
+  summarize(Bias = mean(Bias), SE = mean(Variance), MSE = mean(MSE))  %>%
+  ggplot(aes(x = Method, y = MSE, fill = Method)) +
+  geom_bar(stat = 'identity') +
+  labs(title = "Figure 9: Advantages of BIC", 
+       subtitle = "75 Observations, 8 Highly Collinear Predictors with Low Variability, Low Variability in the Response") +
+  theme_classic()
 ```
 
 
